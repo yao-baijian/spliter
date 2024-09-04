@@ -27,9 +27,6 @@ class Node(object):
         pass
 
     def show(self, buf=sys.stdout, offset=0, attrnames=False, showlineno=True):
-        file = "test.txt"
-        with open(file, 'a') as f:
-            f.write(str(offset) + "\n")
 
 
         indent = 2

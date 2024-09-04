@@ -257,6 +257,7 @@ class Graph:
         # 找到所有Reg节点
         reg_nodes = [name for name, node in self.node_dict.items() if node.type == 'Reg']
         critical_path = []
+        orphan_regs = []
 
         # 遍历所有Reg节点，找到所有Reg-Reg之间的最短路径
         for start_node in reg_nodes:
@@ -265,8 +266,17 @@ class Graph:
                     path = self.find_shortest_path(start_node, end_node)
                     if path:
                         critical_path.append(path)
-
-        return critical_path if len(critical_path) != 0 else None
+                        
+        for reg in reg_nodes:
+            has_parent = False
+            for node in self.node_dict.values():
+                if reg in self.get_neighbors(node.name):
+                    has_parent = True
+                    break
+            if not has_parent:
+                orphan_regs.append(reg)
+                
+        return critical_path if len(critical_path) != 0 else None, orphan_regs if len(orphan_regs) != 0 else None
 
     def find_shortest_path(self, start, end):
         # 使用BFS找到最短路径
@@ -286,62 +296,74 @@ class Graph:
                     queue.append((neighbor, path + [neighbor]))
         return None
 
-    def extract_critical_path_rtl(self, critical_paths, design_name, post_fix):
-        modules = []
-        # for path in critical_paths:
-        #     module_name = f"{design_name}_path_{path[0]}_to_{path[-1]}"
-        #     ports = [Port(Identifier(self.node_dict[node]),
-        #                     None, None, None) for node in path]
-        #     items = []
-        #     for i in range(len(path) - 1):
-        #         items.append(Assign(Lvalue(Identifier(path[i+1])), Rvalue(Identifier(path[i]))))
-
-        #     module = ModuleDef(module_name, [], ports, items)
-        #     modules.append(module)
-        items = []
-        ports = []
+    def extract_critical_path_rtl(self, critical_paths, 
+                                        orphan_regs, 
+                                        params_list, 
+                                        design_name, 
+                                        post_fix ):
+        items   = []
+        params  = []
+        ports   = []
+        
+        
+        # name, width, dimensions, type,
+        # get father node
+        
+        for param in params_list:
+            params.append(ParamArg(param))
+            
+        for reg in orphan_regs:
+            ports.append(Port(reg, self.node_dict[reg].width, None, 'Input'))
+                    
         for path in critical_paths:
             for node in path:
-                ports.append(Port(Identifier(node),None, None, None))
+                if self.node_dict[node].type == 'Reg' and node not in orphan_regs:
+                    ports.append(Port(reg, self.node_dict[reg].width, None, 'output'))
+                                
             for i in range(len(path) - 1):
                 items.append(Assign(Lvalue(Identifier(path[i+1])), Rvalue(Identifier(path[i]))))
 
-        module = ModuleDef(design_name + post_fix, [], ports, items)
-            
         # 生成 AST
-        ast = Source(None, module)
+        ast = Source(None, 
+                     ModuleDef(design_name + post_fix, 
+                               Paramlist(params), 
+                               Portlist(ports), 
+                               items))
         
         # 生成 Verilog 代码
         codegen = ASTCodeGenerator()
         verilog_code = codegen.visit(ast)
         
         # 将 Verilog 代码写入文件
-        with open(f"{design_name}"+ "post_fix", "w") as f:
+        with open(f"src/vlg2ir/result/{design_name}" + post_fix + ".v", "w") as f:
             f.write(verilog_code)
 
         return verilog_code
 
-    def remove_critical_path(self, critical_path):
-        for node in critical_path:
-            if self.node_dict[node].type != 'Reg':
-                self.remove_node(node)
+    def remove_critical_path(self, critical_paths):
+        cp_node_dict = self.node_dict.copy()
+        for path in critical_paths:
+            for node in path:
+                if self.node_dict[node].type != 'Reg':
+                    self.remove_node(node)
 
         # 保留端寄存器
-        for node in critical_path:
-            if self.node_dict[node].type == 'Reg':
-                neighbors = self.get_neighbors(node)
-                for neighbor in neighbors:
-                    if neighbor not in critical_path:
-                        self.add_edge(node, neighbor)
+        for path in critical_paths:
+            for node in path:
+                if self.node_dict[node].type == 'Reg':
+                    neighbors = self.get_neighbors(node)
+                    for neighbor in neighbors:
+                        if neighbor not in critical_paths:
+                            self.add_edge(node, neighbor)
                                        
     def partition_graph(self, design_name):
-        critical_path = self.find_critical_path()
+        critical_path, orphan_regs = self.find_critical_path()
         if not critical_path:
             print("ERROR: pure comb logic")
             return 
-        self.extract_critical_path_rtl(critical_path, design_name, "_critical_paths.v")
+        self.extract_critical_path_rtl(critical_path, orphan_regs, [], design_name, "_critical_paths")
         self.remove_critical_path(critical_path)
-        self.extract_critical_path_rtl(critical_path, design_name, "_remains.v")
+        self.extract_critical_path_rtl(critical_path, orphan_regs, [], design_name, "_remains")
 
 
 

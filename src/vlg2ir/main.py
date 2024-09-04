@@ -15,7 +15,7 @@ if not os.path.exists(design):
 ast, directives = parse([design], 
                         preprocess_include=[], 
                         preprocess_define=[])
-with open("src/vlg2ir/ast.txt", "w") as f:
+with open("src/vlg2ir/ast.out/ast.txt", "w") as f:
     ast.show(buf = f)
 
 ast_analyzer = AST_analyzer(ast)
