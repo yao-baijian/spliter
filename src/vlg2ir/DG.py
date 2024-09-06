@@ -6,12 +6,13 @@ from pyverilog.ast_code_generator.codegen import ASTCodeGenerator
 import sys, re, os
 import numpy as np
 import pickle
+from funcy import *
 sys.setrecursionlimit(10000)
 
 class Node:
     def __init__(self, name, type, width:None, father:None):
         self.name = name
-        self.type = type
+        self.type = type 
         self.width = width
         self.father = father
         self.path = []
@@ -278,6 +279,12 @@ class Graph:
                 
         return critical_path if len(critical_path) != 0 else None, orphan_regs if len(orphan_regs) != 0 else None
 
+    def get_parent_nodes(self, node):
+        # TODO add parent nodes search
+        self.get_neighbors(self, node)
+    
+    
+    
     def find_shortest_path(self, start, end):
         # 使用BFS找到最短路径
         queue = [(start, [start])]
@@ -295,6 +302,43 @@ class Graph:
                 else:
                     queue.append((neighbor, path + [neighbor]))
         return None
+    
+    def construct(self, path, inst):
+        
+        if inst == 'Always':
+            return Always(SensList(self.construct(path, 'SensList')), self.construct(path, 'Block'))
+            
+        elif inst == 'SensList':
+            return [Sens(Identifier('clk'))]
+        
+        elif inst == 'Block':
+            return  NonblockingSubstitution(self.construct(path, 'Lvalue'), self.construct(path, 'Rvalue'))
+            
+        elif inst == 'Lvalue':
+            node =  path.pop(0)
+            return Lvalue(Identifier(node))
+        
+        elif inst == 'Rvalue':
+            node =  path.pop(0)
+            if node[0:4] == 'Cond':
+                path = self.get_neighbors(node)
+                return Rvalue(self.construct(path, 'Cond'))
+            else:
+                return Rvalue(Identifier(node))
+        elif inst == 'Cond':
+            return Cond(self.construct(path[0], 'Elem'),
+                        self.construct(path[1], 'Elem'),
+                        self.construct(path[2], 'Elem'))
+        elif inst == 'Elem':
+            node = path
+            if node[:-2] == 'Xor':
+                path = self.get_neighbors(node)
+                return Xor(Identifier(path[0]), Identifier(path[1]))
+            else:
+                return Identifier(node)
+        else:
+            return None
+
 
     def extract_critical_path_rtl(self, critical_paths, 
                                         orphan_regs, 
@@ -304,7 +348,7 @@ class Graph:
         items   = []
         params  = []
         ports   = []
-        
+        visited_output_port = []
         
         # name, width, dimensions, type,
         # get father node
@@ -313,24 +357,53 @@ class Graph:
             params.append(ParamArg(param))
             
         for reg in orphan_regs:
-            ports.append(Port(reg, self.node_dict[reg].width, None, 'Input'))
-                    
+            ports.append(Port(reg, Width(self.node_dict[reg].width, 0) , None, 'input'))
+        
         for path in critical_paths:
+            
+            non_critical_father = []
+            
             for node in path:
-                if self.node_dict[node].type == 'Reg' and node not in orphan_regs:
-                    ports.append(Port(reg, self.node_dict[reg].width, None, 'output'))
-                                
-            for i in range(len(path) - 1):
-                items.append(Assign(Lvalue(Identifier(path[i+1])), Rvalue(Identifier(path[i]))))
+                # generate output reg
+                if self.node_dict[node].type == 'Reg' and node not in orphan_regs and node not in visited_output_port:
+                    visited_output_port.append(node)
+                    ports.append(Port(node, Width(self.node_dict[reg].width, 0), None, 'output'))
 
-        # 生成 AST
-        ast = Source(None, 
+                # check non-critial path father reg
+                # parent_nodes = self.get_parent_nodes(node)
+                # for parent in parent_nodes:
+                #     if parent not in path:
+                #         ports.append(Port(parent, Width(self.node_dict[parent].width, 0), None, 'input'))
+                #         non_critical_father.append(parent)
+            
+            # operator = self.node_dict[path[1]]
+
+            items.append(self.construct(path, 'Always'))
+            
+            ast = Source(None, 
                      ModuleDef(design_name + post_fix, 
                                Paramlist(params), 
                                Portlist(ports), 
                                items))
+        # :  (at 135)
+        #   Lvalue:  (at 135)
+        #     Identifier: sa00 (at 135)
+        #   Rvalue:  (at 135)
+        #     Cond:  (at 135)
+        #       Identifier: ld_r (at 135)
+        #       Xor:  (at 135)
+        #         Partselect:  (at 135)
+        #           Identifier: text_in_r (at 135)
+        #           IntConst: 127 (at 135)
+        #           IntConst: 120 (at 135)
+        #         Partselect:  (at 135)
+        #           Identifier: w0 (at 135)
+        #           IntConst: 31 (at 135)
+        #           IntConst: 24 (at 135)
+        #       Identifier: sa00_next (at 135)
+        #   DelayStatement:  (at 135)
+        #     IntConst: 1 (at 135)         
         
-        # 生成 Verilog 代码
         codegen = ASTCodeGenerator()
         verilog_code = codegen.visit(ast)
         

@@ -19,7 +19,7 @@ class AST_analyzer(object):
         self.collect_function(ast)
         self.traverse_AST(ast)
         # self.graph.cal_node_width()
-        self.eliminate_wires(self.graph)
+        # self.eliminate_wires(self.graph)
         self.add_parent_edge()
         # self.graph.show_graph()
         

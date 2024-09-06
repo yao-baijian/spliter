@@ -4,3 +4,6 @@ src/__pycache__
 
 parser.out
 parsetab.py
+
+src/vlg2ir/__pycache__
+src/vlg2ir/result/
